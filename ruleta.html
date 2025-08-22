@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Ruleta</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; display: grid; place-items: center; gap: 12px; padding: 20px; }
+    .panel { display: grid; gap: 10px; max-width: 720px; width: 100%; }
+    label { font-weight: 600; }
+    textarea, input { width: 100%; padding: 8px; font-size: 14px; }
+    button { padding: 10px 16px; font-size: 16px; cursor: pointer; }
+    .wrap { position: relative; }
+    canvas { border: 6px solid #333; border-radius: 50%; background: #fff; }
+    .pointer {
+      position: absolute; top: 50%; right: -22px; transform: translateY(-50%);
+      width: 0; height: 0; border-top: 14px solid transparent; border-bottom: 14px solid transparent;
+      border-left: 22px solid #e53935; filter: drop-shadow(0 1px 2px rgba(0,0,0,.25));
+    }
+    .row-2 { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; }
+    #result { font-size: 20px; font-weight: 700; margin-top: 6px; }
+    small { opacity: .75; }
+  </style>
+</head>
+<body>
+  <h1>🎡 Ruleta</h1>
+
+  <div class="panel">
+    <div>
+      <label for="nameInput">Añadir nombres (uno o varios, separados por comas):</label>
+      <div class="row-2">
+        <input id="nameInput" placeholder="Ej: Ana, Carlos, Laura" />
+        <button id="addBtn">Agregar</button>
+        <button id="clearBtn" title="Vaciar lista">Limpiar</button>
+      </div>
+      <small>Todos los nombres se guardan en minúsculas automáticamente.</small>
+    </div>
+
+    <div>
+      <label for="namesBox">Nombres actuales:</label>
+      <textarea id="namesBox" rows="3" readonly></textarea>
+    </div>
+
+    <button id="spinBtn">Girar</button>
+  </div>
+
+  <div class="wrap">
+    <canvas id="wheel" width="500" height="500"></canvas>
+    <div class="pointer" aria-hidden="true"></div>
+  </div>
+
+  <div id="result"></div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const wheel = $('wheel');
+    const ctx = wheel.getContext('2d');
+    const R = wheel.width / 2, CX = R, CY = R;
+
+    // 👇 Lista fija de ganadores en lowercase
+    const fixedWinners = ["maisa", "maría isabel", "maria isabel"];
+
+    let names = [];
+    let startAngle = 0;
+    let spinning = false;
+
+    function renderNamesBox() {
+      $('namesBox').value = names.join(', ');
+    }
+
+    function addNamesFromInput() {
+      const raw = $('nameInput').value;
+      if (!raw.trim()) return;
+      const incoming = raw.split(',')
+        .map(s => s.trim().toLowerCase()) // todo a lowercase
+        .filter(Boolean);
+
+      const seen = new Set(names);
+      for (const n of incoming) {
+        if (!seen.has(n)) {
+          names.push(n);
+          seen.add(n);
+        }
+      }
+      $('nameInput').value = '';
+      renderNamesBox();
+      draw(startAngle);
+    }
+
+    function clearNames() {
+      names = [];
+      renderNamesBox();
+      draw(startAngle);
+    }
+
+    function draw(angle = startAngle) {
+      ctx.clearRect(0, 0, wheel.width, wheel.height);
+      ctx.save();
+      ctx.translate(CX, CY);
+      ctx.rotate(angle);
+
+      if (names.length === 0) {
+        ctx.beginPath();
+        ctx.arc(0, 0, R - 6, 0, 2 * Math.PI);
+        ctx.fillStyle = '#eee';
+        ctx.fill();
+        ctx.restore();
+        return;
+      }
+
+      const slice = (2 * Math.PI) / names.length;
+
+      for (let i = 0; i < names.length; i++) {
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.arc(0, 0, R - 6, i * slice, (i + 1) * slice);
+        ctx.fillStyle = i % 2 ? '#f6d365' : '#fda085';
+        ctx.fill();
+
+        ctx.save();
+        ctx.rotate(i * slice + slice / 2);
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#111';
+        ctx.font = 'bold 18px system-ui, Arial';
+        ctx.fillText(names[i], R / 2, 0);
+        ctx.restore();
+      }
+
+      ctx.beginPath();
+      ctx.arc(0, 0, 28, 0, 2 * Math.PI);
+      ctx.fillStyle = '#333';
+      ctx.fill();
+
+      ctx.restore();
+    }
+
+    function easeOutCubic(t){ return 1 - Math.pow(1 - t, 3); }
+
+    function pickTargetIndex() {
+      if (names.length === 0) return -1;
+
+      // Filtrar ganadores fijos que estén en la lista actual
+      const candidates = names
+        .map((n, i) => ({name: n.toLowerCase(), idx: i}))
+        .filter(obj => fixedWinners.includes(obj.name));
+
+      if (candidates.length > 0) {
+        const chosen = candidates[Math.floor(Math.random() * candidates.length)];
+        return chosen.idx;
+      }
+      return Math.floor(Math.random() * names.length);
+    }
+
+    function spinToIndex(i){
+      if (i < 0) return;
+      const slice = (2 * Math.PI) / names.length;
+      const absoluteTargetStart = - (i * slice + slice / 2);
+      let delta = absoluteTargetStart - startAngle;
+      delta = ((delta % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+
+      const extraSpins = 4;
+      const total = delta + extraSpins * 2 * Math.PI;
+
+      const duration = 2600;
+      const t0 = performance.now();
+      spinning = true; $('spinBtn').disabled = true;
+
+      function frame(now){
+        const t = Math.min(1, (now - t0) / duration);
+        const eased = easeOutCubic(t);
+        draw(startAngle + total * eased);
+        if (t < 1) {
+          requestAnimationFrame(frame);
+        } else {
+          startAngle = (startAngle + total) % (2 * Math.PI);
+          draw(startAngle);
+          $('result').textContent = `Ganador: ${names[i]}`;
+          spinning = false; $('spinBtn').disabled = false;
+        }
+      }
+      requestAnimationFrame(frame);
+    }
+
+    $('addBtn').addEventListener('click', addNamesFromInput);
+    $('clearBtn').addEventListener('click', clearNames);
+    $('nameInput').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); addNamesFromInput(); }
+    });
+
+    $('spinBtn').addEventListener('click', () => {
+      if (spinning) return;
+      const idx = pickTargetIndex();
+      spinToIndex(idx);
+    });
+
+    renderNamesBox();
+    draw(startAngle);
+  </script>
+</body>
+</html>
